@@ -7,14 +7,12 @@ pub enum ClientToServer {
     ListUsers, 
     SendMessage { content: String, target: String },
     GetMessages { target: String },
-    //ExitChat,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServerToClient {
     Registered { handle: String },
     UserList { users: Vec<String> },
-    //ChatStarted { partner: String, history: Vec<Message> },
     ChatMessages { partner: String, messages: Vec<Message> },
     ChatMessage { sender: String, content: String },
     Error { message: String },
