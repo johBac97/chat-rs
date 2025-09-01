@@ -5,16 +5,19 @@ use std::io::{Write, self, Read};
 pub enum ClientToServer {
     Register { handle: String },
     ListUsers, 
-    StartChat { target: String },
     SendMessage { content: String, target: String },
-    ExitChat,
+    GetMessages { target: String },
+    //ExitChat,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServerToClient {
+    Registered { handle: String },
     UserList { users: Vec<String> },
-    ChatStarted { partner: String, history: Vec<Message> },
-    MessageReceived { sender: String, content: String },
+    //ChatStarted { partner: String, history: Vec<Message> },
+    ChatMessages { partner: String, messages: Vec<Message> },
+    ChatMessage { sender: String, content: String },
+    Error { message: String },
 }
 
 

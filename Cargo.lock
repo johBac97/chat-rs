@@ -12,10 +12,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chat-rs"
-version = "0.1.0"
-
-[[package]]
 name = "client"
 version = "0.1.0"
 
@@ -94,6 +90,13 @@ dependencies = [
  "memchr",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "server"
+version = "0.1.0"
+dependencies = [
+ "protocol",
 ]
 
 [[package]]

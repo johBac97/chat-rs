@@ -1,22 +1,13 @@
+use protocol::{decode, recv_msg, send_msg, ClientToServer, Message, ServerToClient};
 use std::collections::HashMap;
-use std::io::{self, BufRead, Write};
+use std::io;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
-//use std::net::SocketAddr;
-//use std::os::unix::
 
 #[derive(Debug)]
 struct Client {
     stream: TcpStream,
-    //addr: SocketAddr,
-    current_partner: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-struct Message {
-    content: String,
-    sender: String,
 }
 
 #[derive(Clone, Debug)]
@@ -30,12 +21,14 @@ struct ServerState {
     chats: HashMap<(String, String), Chat>,
 }
 
+/*
 enum Command {
     ListClients,
     StartChat { target: String },
     ExitChat,
     Unknown
 }
+*/
 
 fn normalize_key(s1: &str, s2: &str) -> (String, String) {
     let mut pair = [s1.to_string(), s2.to_string()];
@@ -48,39 +41,24 @@ fn main() -> io::Result<()> {
 
     println!("Chat Server listening on:\t127.0.0.1:8080");
 
-    //let clients: Arc<Mutex<HashMap<String, TcpStream>>> = Arc::new(Mutex::new(HashMap::new()));
-
     let server_state = Arc::new(Mutex::new(ServerState {
         clients: HashMap::new(),
         chats: HashMap::new(),
     }));
 
-    let mut client_counter: usize = 0;
-
     for stream in listener?.incoming() {
         let stream = stream?;
 
-        client_counter += 1;
-        let handle = format!("Client_{}", client_counter);
+        println!(
+            "Incomming connection from:\t{}\n",
+            stream.peer_addr().unwrap()
+        );
 
-        println!("{}, connected from:\t{}", handle, stream.peer_addr()?);
-
-        let stream_clone = stream.try_clone()?;
+        //let stream_clone = stream.try_clone()?;
         let state_clone = server_state.clone();
 
-        {
-            let mut server_state = state_clone.lock().unwrap();
-            server_state.clients.insert(
-                handle.clone(),
-                Client {
-                    stream: stream_clone,
-                    current_partner: None,
-                },
-            );
-        }
-
         thread::spawn(move || {
-            if let Err(e) = handle_client(stream, state_clone, handle) {
+            if let Err(e) = handle_client(stream, state_clone) {
                 eprintln!("Error handling client:\t{}", e);
             }
         });
@@ -89,33 +67,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn get_prompt(state: &Arc<Mutex<ServerState>>, handle: &String) -> String {
-    let server_state = state.lock().unwrap();
-
-    if let Some(client) = server_state.clients.get(handle) {
-        if let Some(partner) = &client.current_partner {
-            return format!("Chat with {}>>", partner);
-        }
-    }
-    return format!("Command ({})>>", handle);
-}
-
-fn send_message_with_state(state: &Arc<Mutex<ServerState>>, handle: &str, message: &str) -> io::Result<()> {
-    let state = state.lock().unwrap();
-
-    if let Some(client) = state.clients.get(handle) {
-        let stream = client.stream.try_clone()?;
-        send_message(&stream, message);
-    }
-    Ok(())
-}
-fn send_message(stream: &TcpStream, message: &str) -> io::Result<()> {
-    let mut stream = stream.try_clone()?;
-    stream.write_all(message.as_bytes());
-    stream.flush()?;
-    Ok(())
-}
-
+/*
 fn cleanup_client(state: &Arc<Mutex<ServerState>>, handle: &String) -> io::Result<()> {
     println!("Client disconnected:\t{}", handle);
     // TODO send message to people chatting with this handle
@@ -123,7 +75,9 @@ fn cleanup_client(state: &Arc<Mutex<ServerState>>, handle: &String) -> io::Resul
 
     Ok(())
 }
+*/
 
+/*
 fn parse_command(input: String) -> Option<Command> {
     let mut parts = input.split_whitespace();
     let cmd = parts.next()?;
@@ -211,7 +165,9 @@ fn process_command(
 
     Ok(())
 }
+*/
 
+/*
 fn send_message_to_partner(
     state: &Arc<Mutex<ServerState>>,
     handle: &String,
@@ -264,47 +220,140 @@ fn send_message_to_partner(
 
     Ok(())
 }
+*/
 
-fn handle_client(
-    stream: TcpStream,
-    state: Arc<Mutex<ServerState>>,
-    handle: String,
+fn send_chat_message(
+    state: &Arc<Mutex<ServerState>>,
+    handle: &String,
+    target: &String,
+    content: &String,
 ) -> io::Result<()> {
-    let mut reader = io::BufReader::new(&stream);
+    let mut server_state = state.lock().unwrap();
 
-    let mut line = String::new();
+    if !server_state.clients.contains_key(target) {
+        // The target handle isn't connected
+        let mut client_stream = &server_state.clients.get_mut(handle).unwrap().stream;
+        send_msg(
+            &mut client_stream,
+            &ServerToClient::Error {
+                message: "Target handle doesn't exist.".to_string(),
+            },
+        )?;
+        return Ok(());
+    }
 
-    loop {
-        let prompt = get_prompt(&state, &handle);
+    let lookup_key = normalize_key(&handle, &target);
+    if !server_state.chats.contains_key(&lookup_key) {
+        server_state
+            .chats
+            .insert(
+                lookup_key.clone(),
+                Chat {
+                    messages: Vec::<Message>::new(),
+                },
+            )
+            .unwrap();
+    }
 
-        // Send prompt
-        send_message_with_state(&state, &handle, &prompt);
+    let chat = server_state.chats.get_mut(&lookup_key).unwrap();
 
-        line.clear();
+    chat.messages.push(Message {
+        sender: handle.clone(),
+        content: content.clone(),
+    });
 
-        let bytes_read = reader.read_line(&mut line)?;
+    // Send the message to the target client
+    let mut target_stream = &server_state.clients.get_mut(target).unwrap().stream;
+    send_msg(
+        &mut target_stream,
+        &ServerToClient::ChatMessage {
+            sender: handle.clone(),
+            content: content.clone(),
+        },
+    );
 
-        if bytes_read == 0 {
-            cleanup_client(&state, &handle);
+    Ok(())
+}
+
+fn handle_client(mut stream: TcpStream, state: Arc<Mutex<ServerState>>) -> io::Result<()> {
+    // First message should be the client registring with a handle
+    let data =
+        recv_msg(&mut stream)?.ok_or(io::Error::new(io::ErrorKind::ConnectionReset, "No data"))?;
+    let msg: ClientToServer = decode(&data)?;
+
+    let handle = if let ClientToServer::Register { handle } = msg {
+        let mut server_state = state.lock().unwrap();
+        if server_state.clients.contains_key(&handle) {
+            send_msg(
+                &mut stream,
+                &ServerToClient::Error {
+                    message: "Handle already taken".to_string(),
+                },
+            );
             return Ok(());
         }
+        server_state
+            .clients
+            .insert(
+                handle.clone(),
+                Client {
+                    stream: stream.try_clone()?,
+                },
+            )
+            .unwrap();
+        send_msg(
+            &mut stream,
+            &ServerToClient::Registered {
+                handle: handle.clone(),
+            },
+        )?;
+        handle
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Expected Register Command.",
+        ));
+    };
 
-        let input = line.trim();
-        if input.is_empty() {
-            continue;
-        }
+    loop {
+        let data = match recv_msg(&mut stream)? {
+            Some(d) => d,
+            None => break,
+        };
 
-        match parse_command(input.to_string()) {
-            Some(cmd) => process_command(&state, &handle, cmd)?,
-            None => {
-                {
-                    let state_locked = state.lock().unwrap();
-                    if !state_locked.clients.contains_key(&handle) {
-                        continue;
-                    }
-                }
-                send_message_to_partner(&state, &handle, input.to_string())?;
+        let msg: ClientToServer = decode(&data)?;
+
+        match msg {
+            ClientToServer::Register { handle: _ } => {
+                // Should never happen
+                todo!();
+            }
+            ClientToServer::ListUsers => {
+                let server_state = state.lock().unwrap();
+                let users: Vec<String> = server_state.clients.keys().cloned().collect();
+                send_msg(&mut stream, &ServerToClient::UserList { users })?;
+            }
+            ClientToServer::SendMessage { content, target } => {
+                send_chat_message(&state, &handle, &target, &content);
+            }
+            ClientToServer::GetMessages { target } => {
+                let server_state = state.lock().unwrap();
+
+                let lookup_key = normalize_key(&handle, &target);
+                let messages: Vec<Message> = match server_state.chats.get(&lookup_key) {
+                    Some(chat) => chat.messages.clone(),
+                    None => Vec::<Message>::new(),
+                };
+
+                send_msg(
+                    &mut stream,
+                    &ServerToClient::ChatMessages {
+                        partner: target,
+                        messages: messages,
+                    },
+                )?;
             }
         }
     }
+    Ok(())
 }
