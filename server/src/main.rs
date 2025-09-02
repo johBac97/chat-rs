@@ -169,6 +169,7 @@ fn handle_client(mut stream: TcpStream, state: Arc<Mutex<ServerState>>) -> io::R
                 let _ = send_msg(&mut stream, &ServerToClient::UserList { users })?;
             }
             ClientToServer::SendMessage { content, target } => {
+                println!("Received send message request from {}, '{}' to '{}'\n", handle, content, target);
                 let _ = send_chat_message(&state, &handle, &target, &content);
             }
             ClientToServer::GetMessages { target } => {
