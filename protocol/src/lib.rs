@@ -1,43 +1,52 @@
 use serde::{Deserialize, Serialize};
-use std::io::{Write, self, Read};
+use std::io::{self, Read, Write};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClientToServer {
     Register { handle: String },
-    ListUsers, 
+    ListUsers,
     SendMessage { content: String, target: String },
     GetMessages { target: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServerToClient {
-    Registered { handle: String },
-    UserList { users: Vec<String> },
-    ChatMessages { partner: String, messages: Vec<Message> },
-    ChatMessage { sender: String, content: String },
-    Error { message: String },
+    Registered {
+        handle: String,
+    },
+    UserList {
+        users: Vec<String>,
+    },
+    ChatMessages {
+        partner: String,
+        messages: Vec<Message>,
+    },
+    ChatMessage {
+        sender: String,
+        content: String,
+    },
+    Error {
+        message: String,
+    },
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
     pub sender: String,
-    pub content: String
+    pub content: String,
 }
 
 #[cfg(feature = "json")]
 macro_rules! serialize {
     ($msg:expr) => {{
-        serde_json::to_vec($msg)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+        serde_json::to_vec($msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
     }};
 }
 
 #[cfg(feature = "bincode")]
 macro_rules! serialize {
     ($msg:expr) => {{
-        bincode::serialize($msg)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+        bincode::serialize($msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
     }};
 }
 
@@ -54,7 +63,6 @@ macro_rules! deserialize {
         bincode::deserialize($data)
     }};
 }
-
 
 pub fn send_msg<W: Write, T: Serialize>(writer: &mut W, msg: &T) -> io::Result<()> {
     let data = serialize!(msg);

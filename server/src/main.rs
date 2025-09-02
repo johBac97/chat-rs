@@ -22,7 +22,7 @@ struct ServerState {
 
 fn normalize_key(s1: &str, s2: &str) -> (String, String) {
     let mut pair = [s1.to_string(), s2.to_string()];
-    pair.sort(); 
+    pair.sort();
     (pair[0].clone(), pair[1].clone())
 }
 
@@ -78,15 +78,12 @@ fn send_chat_message(
 
     let lookup_key = normalize_key(&handle, &target);
     if !server_state.chats.contains_key(&lookup_key) {
-        server_state
-            .chats
-            .insert(
-                lookup_key.clone(),
-                Chat {
-                    messages: Vec::<Message>::new(),
-                },
-            );
-            
+        server_state.chats.insert(
+            lookup_key.clone(),
+            Chat {
+                messages: Vec::<Message>::new(),
+            },
+        );
     }
 
     let chat = server_state.chats.get_mut(&lookup_key).unwrap();
@@ -127,14 +124,12 @@ fn handle_client(mut stream: TcpStream, state: Arc<Mutex<ServerState>>) -> io::R
             );
             return Ok(());
         }
-        server_state
-            .clients
-            .insert(
-                handle.clone(),
-                Client {
-                    stream: stream.try_clone()?,
-                },
-            );
+        server_state.clients.insert(
+            handle.clone(),
+            Client {
+                stream: stream.try_clone()?,
+            },
+        );
 
         send_msg(
             &mut stream,
@@ -169,7 +164,10 @@ fn handle_client(mut stream: TcpStream, state: Arc<Mutex<ServerState>>) -> io::R
                 let _ = send_msg(&mut stream, &ServerToClient::UserList { users })?;
             }
             ClientToServer::SendMessage { content, target } => {
-                println!("Received send message request from {}, '{}' to '{}'\n", handle, content, target);
+                println!(
+                    "Received send message request from {}, '{}' to '{}'\n",
+                    handle, content, target
+                );
                 let _ = send_chat_message(&state, &handle, &target, &content);
             }
             ClientToServer::GetMessages { target } => {
