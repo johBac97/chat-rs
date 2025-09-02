@@ -32,7 +32,7 @@ fn main() -> io::Result<()> {
 
     let server = {
         if args.len() < 2 {
-            "127.0.0.1:8080"
+            "0.0.0.0:8080"
         } else {
             args[1].as_str()
         }
