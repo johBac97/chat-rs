@@ -10,8 +10,13 @@ use std::io;
 use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
+use std::env;
 
-//const HELP_MESSAGE: &str = "";
+const HELP_MESSAGE: &str = "Welcome to Chat-rs. These are the available commands:
+'/users': Display available users.
+'/chat <user>': Enter a chat with a target user.
+'/exit': Exit a chat or Chat-rs itself.
+'/help': Display this help message.";
 
 enum Status {
     Initializing,
@@ -25,7 +30,7 @@ struct ClientState {
     status: Status,
     current_partner: Option<String>,
     messages: Vec<Message>,
-    display: Vec<String>,
+    display: Vec<DisplayMessage>,
     title: String,
     handle: Option<String>,
     input: String,
@@ -38,6 +43,20 @@ enum Input {
     ChatMessage { message: String },
     InvalidCommand { message: String } ,
     Help,
+}
+
+#[derive(Clone)]
+enum DisplayMessageMode {
+    System,
+    User,
+    OtherUser
+}
+
+#[derive(Clone)]
+struct DisplayMessage {
+    content: String,
+    sender: String,
+    mode: DisplayMessageMode,
 }
 
 fn parse_input(input: String) -> Input {
@@ -76,8 +95,18 @@ fn process_input(client_state: &Arc<Mutex<ClientState>>, mut stream: &TcpStream)
 
             let _ = send_msg(&mut stream, &ClientToServer::Register { handle: handle.clone().to_string() });
 
-            state.display.push(format!("Requested handle: {}", handle));
+            //state.display.push(format!("Requested handle: {}", handle));
+            state.display.push( DisplayMessage {
+                content: format!("Requested handle: {}", handle),
+                sender: "System".to_string(),
+                mode: DisplayMessageMode::System,
+            });
 
+            state.display.extend(String::from(HELP_MESSAGE).split("\n").map(|l| DisplayMessage {
+                content: String::from(l),
+                sender: "System".to_string(),
+                mode: DisplayMessageMode::System,
+            }));
         }
         Status::InConsole => {
             // In the main console
@@ -88,12 +117,28 @@ fn process_input(client_state: &Arc<Mutex<ClientState>>, mut stream: &TcpStream)
                     state.status = Status::Exit;
                 }
                 Input::ChatMessage { message } => {
-                    let _ = state.display.push("[SYSTEM] Please connect to a chat before sending messages.".to_string());
+                    //let _ = state.display.push("[SYSTEM] Please connect to a chat before sending messages.".to_string());
+                    state.display.push( DisplayMessage {
+                        content: "Please connect to a chat to send a message.".to_string(),
+                        sender: "System".to_string(),
+                        mode: DisplayMessageMode::System,
+                    });
                 },
                 Input::InvalidCommand { message } => {
-                    state.display.push(format!("[SYSTEM] {}", message));
+                    //state.display.push(format!("[SYSTEM] {}", message));
+                    state.display.push( DisplayMessage {
+                        content: message,
+                        sender: "System".to_string(),
+                        mode: DisplayMessageMode::System,
+                    });
                 },
-                Input::Help => { },
+                Input::Help => { 
+                    state.display.extend(String::from(HELP_MESSAGE).split("\n").map(|l| DisplayMessage {
+                        content: String::from(l),
+                        sender: "System".to_string(),
+                        mode: DisplayMessageMode::System,
+                    }));
+                },
             }
         }
         Status::InChat => {
@@ -111,15 +156,36 @@ fn process_input(client_state: &Arc<Mutex<ClientState>>, mut stream: &TcpStream)
                     if let Some(current_partner) = &state.current_partner {
                         let _ = send_msg(&mut stream, &ClientToServer::SendMessage { content: message.clone(), target: current_partner.to_string() });
                         let handle = state.handle.as_ref().unwrap().to_string();
-                        let _ = state.display.push(format!("{}: {}", handle, message.clone()));
+                        //let _ = state.display.push(format!("{}: {}", handle, message.clone()));
+                        state.display.push( DisplayMessage {
+                            content: message.clone(),
+                            sender: handle,
+                            mode: DisplayMessageMode::User,
+                        });
                     } else {
-                        let _ = state.display.push("[SYSTEM] Please connect to a chat before sending messages.".to_string());
+                        //let _ = state.display.push("[SYSTEM] Please connect to a chat before sending messages.".to_string());
+                        state.display.push( DisplayMessage {
+                            content: "Please connect to a chat before sending a message.".to_string(),
+                            sender: "System".to_string(),
+                            mode: DisplayMessageMode::System,
+                        });
                     }
                 },
                 Input::InvalidCommand { message } => {
-                    state.display.push(format!("[SYSTEM] {}", message));
+                    //state.display.push(format!("[SYSTEM] {}", message));
+                    state.display.push( DisplayMessage {
+                        content: message,
+                        sender: "System".to_string(),
+                        mode: DisplayMessageMode::System,
+                    });
                 },
-                Input::Help => { },
+                Input::Help => { 
+                    state.display.extend(String::from(HELP_MESSAGE).split("\n").map(|l| DisplayMessage {
+                        content: String::from(l),
+                        sender: "System".to_string(),
+                        mode: DisplayMessageMode::System,
+                    }));
+                },
             }
         }
         _ => { }
@@ -145,7 +211,17 @@ fn draw_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, cli
                 .constraints([Constraint::Percentage(90), Constraint::Percentage(10)])
                 .split(area);
 
-        let msg_list = List::new(display.iter().map(|m| Line::from(m.as_str())))
+        let msg_list = List::new(display.iter().map(|m| {
+            let sender = format!("[{}] ", m.sender.to_uppercase());
+
+            let sender_formatted = match m.mode {
+                DisplayMessageMode::User => sender.green().bold(),
+                DisplayMessageMode::OtherUser => sender.blue().bold(),
+                DisplayMessageMode::System => sender.red().bold(),
+            };
+
+            Line::from(vec![sender_formatted.into(), m.content.as_str().into()])
+        }))
             .block(Block::default().title(title).borders(Borders::ALL));
         frame.render_widget(msg_list, chunks[0]);
 
@@ -167,7 +243,11 @@ fn listen(state: Arc<Mutex<ClientState>>, mut stream: TcpStream) -> io::Result<(
             ServerToClient::Registered { handle } => {
                 // Successfully registered handle
                 let mut st = state.lock().unwrap();
-                st.display.push(format!("[SYSTEM] Successfully registered as handle: {}", handle));
+                st.display.push( DisplayMessage {
+                    content: format!("Successfully registered as user: {}", handle),
+                    sender: "System".to_string(),
+                    mode: DisplayMessageMode::System,
+                });
                 st.title = format!("Console ({})", handle.clone());
                 st.handle = Some(handle);
                 st.status = Status::InConsole;
@@ -175,12 +255,20 @@ fn listen(state: Arc<Mutex<ClientState>>, mut stream: TcpStream) -> io::Result<(
             ServerToClient::UserList { users } => {
                 // Response with a list of available user handles
                 let mut st = state.lock().unwrap();
-                st.display.push(format!("[SYSTEM] Available user handles ({})", users.join(",")));
-            }
+                st.display.push( DisplayMessage {
+                    content: format!("Available users: {}", users.join(", ")),
+                    sender: "System".to_string(),
+                    mode: DisplayMessageMode::System,
+                });
+            },
             ServerToClient::Error { message } => {
                 let mut st = state.lock().unwrap();
-                st.display.push(format!("[SYSTEM] An error occurred: {}", message));
-            }
+                st.display.push( DisplayMessage {
+                    content: format!("An error occurred: {}", message),
+                    sender: "System".to_string(),
+                    mode: DisplayMessageMode::System,
+                });
+            },
             ServerToClient::ChatMessages { partner, messages } => {
                 // The user has requested the chat messages with partner. Enter chat with this user 
                 let mut st = state.lock().unwrap();
@@ -188,7 +276,17 @@ fn listen(state: Arc<Mutex<ClientState>>, mut stream: TcpStream) -> io::Result<(
                 st.current_partner = Some(partner.clone());
 
                 st.display.clear();
-                st.display.extend(messages.into_iter().map(|m| format!("{}:{}", m.sender, m.content)));
+                st.display.extend(messages.into_iter().map(|m| DisplayMessage {
+                    content: m.content,
+                    mode: if m.sender == partner {
+                        DisplayMessageMode::OtherUser 
+                    } else if m.sender == "System" {
+                        DisplayMessageMode::System
+                    } else {
+                        DisplayMessageMode::User
+                    },
+                    sender: m.sender,
+                }));
                 st.status = Status::InChat;
                 st.title = format!("In Chat with '{}'", partner);
             },
@@ -196,22 +294,28 @@ fn listen(state: Arc<Mutex<ClientState>>, mut stream: TcpStream) -> io::Result<(
                 let mut st = state.lock().unwrap();
 
                 if st.current_partner.as_ref().map_or(false, |s| *s == sender) {
-                    st.display.push(format!("{}: {}", sender, content));
+                    st.display.push( DisplayMessage {
+                        content: content,
+                        sender: sender,
+                        mode: DisplayMessageMode::OtherUser,
+                    });
                 } else {
-                    // TODO add a system message that someone has sent a message to the user
+                    // TODO limit this to prevent excessive spam
+                    st.display.push( DisplayMessage {
+                        content: format!("{} just sent you a message. Join the chat using the command '/chat {}'", sender, sender),
+                        sender: "System".to_string(),
+                        mode: DisplayMessageMode::System,
+
+                    });
                 }
             }
-//    Registered { handle: String },
-//    UserList { users: Vec<String> },
-//    ChatMessages { partner: String, messages: Vec<Message> },
-//    ChatMessage { sender: String, content: String },
-//   Error { message: String },
         }
-
     }
 }
 
 fn render(client_state: Arc<Mutex<ClientState>>) -> io::Result<()> {
+    enable_raw_mode()?;
+    io::stdout().execute(crossterm::terminal::EnterAlternateScreen)?;
 
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
@@ -225,16 +329,22 @@ fn render(client_state: Arc<Mutex<ClientState>>) -> io::Result<()> {
 
 fn main() -> io::Result<()> {
 
-    enable_raw_mode()?;
+    let args: Vec<String> = env::args().collect();
 
-    io::stdout().execute(crossterm::terminal::EnterAlternateScreen)?;
+    let server = {
+        if args.len() < 2 {
+            "127.0.0.1:8080"
+        } else {
+            args[1].as_str()
+        }
+    };
 
-    let mut stream = TcpStream::connect("127.0.0.1:8080")?;
+    let mut stream = TcpStream::connect(server)?;
 
     let client_state = Arc::new(Mutex::new(ClientState {
         status: Status::Initializing,
         messages: Vec::<Message>::new(),
-        display: Vec::<String>::new(),
+        display: Vec::<DisplayMessage>::new(),
         title: "Connecting...".to_string(),
         handle: None,
         current_partner: None,
@@ -265,7 +375,11 @@ fn main() -> io::Result<()> {
                 Status::Initializing => {
                     // Not registred yet, do that first.
                     state.title = "Registering".to_string();
-                    state.display.push("Please enter your handle...".to_string());
+                    state.display.push( DisplayMessage {
+                        content: "Please enter your user name...".to_string(),
+                        sender: "System".to_string(),
+                        mode: DisplayMessageMode::System,
+                    });
                     state.status = Status::Registering;
                 },
                 Status::Exit => break,
