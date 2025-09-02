@@ -4,6 +4,7 @@ use std::io;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::env;
 
 #[derive(Debug)]
 struct Client {
@@ -27,9 +28,18 @@ fn normalize_key(s1: &str, s2: &str) -> (String, String) {
 }
 
 fn main() -> io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:8080");
+    let args: Vec<String> = env::args().collect();
 
-    println!("Chat Server listening on:\t127.0.0.1:8080");
+    let server = {
+        if args.len() < 2 {
+            "127.0.0.1:8080"
+        } else {
+            args[1].as_str()
+        }
+    };
+    let listener = TcpListener::bind(server);
+
+    println!("Chat Server listening on:\t{}", server);
 
     let server_state = Arc::new(Mutex::new(ServerState {
         clients: HashMap::new(),
