@@ -9,12 +9,16 @@ use ratatui::{prelude::*, widgets::*};
 use std::io;
 use std::net::TcpStream;
 use std::thread;
+use std::time::Duration;
+
+//const HELP_MESSAGE: &str = "";
 
 enum Status {
     Initializing,
     Registering,
     InConsole,
     InChat,
+    Exit,
 }
 
 struct ClientState {
@@ -24,6 +28,7 @@ struct ClientState {
     display: Vec<String>,
     title: String,
     handle: Option<String>,
+    input: String,
 }
 
 enum Input {
@@ -32,6 +37,7 @@ enum Input {
     Exit,
     ChatMessage { message: String },
     InvalidCommand { message: String } ,
+    Help,
 }
 
 fn parse_input(input: String) -> Input {
@@ -52,12 +58,15 @@ fn parse_input(input: String) -> Input {
             }
         }
         Some("/exit") => Input::Exit,
+        Some("/help") => Input::Help,
         _ => Input::InvalidCommand { message: "Unknown command.".to_string() }
     }
 }
 
-fn process_input(input: String, client_state: &Arc<Mutex<ClientState>>, mut stream: &TcpStream) -> io::Result<()> {
+fn process_input(client_state: &Arc<Mutex<ClientState>>, mut stream: &TcpStream) -> io::Result<()> {
     let mut state = client_state.lock().unwrap();
+
+    let input = state.input.clone();
 
     match state.status {
         Status::Initializing => { },
@@ -75,13 +84,16 @@ fn process_input(input: String, client_state: &Arc<Mutex<ClientState>>, mut stre
             match parse_input(input.trim().to_string()) {
                 Input::ListUsers => { send_msg(&mut stream, &ClientToServer::ListUsers); },
                 Input::Chat { target } => { send_msg(&mut stream, &ClientToServer::GetMessages { target }); }, 
-                Input::Exit => { },
+                Input::Exit => {
+                    state.status = Status::Exit;
+                }
                 Input::ChatMessage { message } => {
                     let _ = state.display.push("[SYSTEM] Please connect to a chat before sending messages.".to_string());
                 },
                 Input::InvalidCommand { message } => {
                     state.display.push(format!("[SYSTEM] {}", message));
                 },
+                Input::Help => { },
             }
         }
         Status::InChat => {
@@ -89,7 +101,12 @@ fn process_input(input: String, client_state: &Arc<Mutex<ClientState>>, mut stre
             match parse_input(input.trim().to_string()) {
                 Input::ListUsers => { send_msg(&mut stream, &ClientToServer::ListUsers); },
                 Input::Chat { target } => { send_msg(&mut stream, &ClientToServer::GetMessages { target }); }, 
-                Input::Exit => { },
+                Input::Exit => {
+                    state.status = Status::InConsole;
+                    state.display.clear();
+                    state.current_partner = None;
+                    state.title = format!("Console ({}))", state.handle.clone().unwrap());
+                },
                 Input::ChatMessage { message } => {
                     if let Some(current_partner) = &state.current_partner {
                         let _ = send_msg(&mut stream, &ClientToServer::SendMessage { content: message.clone(), target: current_partner.to_string() });
@@ -102,20 +119,23 @@ fn process_input(input: String, client_state: &Arc<Mutex<ClientState>>, mut stre
                 Input::InvalidCommand { message } => {
                     state.display.push(format!("[SYSTEM] {}", message));
                 },
+                Input::Help => { },
             }
         }
         _ => { }
     }
 
 
+    state.input.clear();
+
     Ok(())
 }
 
-fn draw_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, client_state: &Arc<Mutex<ClientState>>, input: &String) -> io::Result<()> {
+fn draw_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, client_state: &Arc<Mutex<ClientState>>) -> io::Result<()> {
 
-    let (title, display) = {
+    let (title, display, input) = {
         let state = client_state.lock().unwrap();
-        (state.title.clone(), state.display.clone())
+        (state.title.clone(), state.display.clone(), state.input.clone())
     };
 
     terminal.draw(|frame| {
@@ -148,6 +168,7 @@ fn listen(state: Arc<Mutex<ClientState>>, mut stream: TcpStream) -> io::Result<(
                 // Successfully registered handle
                 let mut st = state.lock().unwrap();
                 st.display.push(format!("[SYSTEM] Successfully registered as handle: {}", handle));
+                st.title = format!("Console ({})", handle.clone());
                 st.handle = Some(handle);
                 st.status = Status::InConsole;
             },
@@ -180,7 +201,6 @@ fn listen(state: Arc<Mutex<ClientState>>, mut stream: TcpStream) -> io::Result<(
                     // TODO add a system message that someone has sent a message to the user
                 }
             }
-            _ => { }
 //    Registered { handle: String },
 //    UserList { users: Vec<String> },
 //    ChatMessages { partner: String, messages: Vec<Message> },
@@ -191,64 +211,81 @@ fn listen(state: Arc<Mutex<ClientState>>, mut stream: TcpStream) -> io::Result<(
     }
 }
 
+fn render(client_state: Arc<Mutex<ClientState>>) -> io::Result<()> {
+
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+
+    loop {
+        let _ = draw_terminal(&mut terminal, &client_state);
+        thread::sleep(Duration::from_millis(32));
+    }
+
+    Ok(())
+}
+
 fn main() -> io::Result<()> {
 
     enable_raw_mode()?;
 
     io::stdout().execute(crossterm::terminal::EnterAlternateScreen)?;
 
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
-
     let mut stream = TcpStream::connect("127.0.0.1:8080")?;
 
     let client_state = Arc::new(Mutex::new(ClientState {
         status: Status::Initializing,
-        current_partner: None,
         messages: Vec::<Message>::new(),
         display: Vec::<String>::new(),
-        title: "Console".to_string(),
-        handle: None
+        title: "Connecting...".to_string(),
+        handle: None,
+        current_partner: None,
+        input: String::new(),
     }));
 
-    let client_clone = client_state.clone();
-    let stream_clone = stream.try_clone()?;
+    let client_clone_data = client_state.clone();
+    let stream_clone_data = stream.try_clone()?;
 
     thread::spawn(move || {
-        if let Err(e) = listen(client_clone, stream_clone) {
-            eprintln!("An error occurred in background thread: {}", e);
+        if let Err(e) = listen(client_clone_data, stream_clone_data) {
+            eprintln!("An error occurred in data receiving thread: {}", e);
         }
     });
 
+    let client_clone_render = client_state.clone();
 
-    let mut input = String::new();
+    thread::spawn(move || {
+        if let Err(e) = render(client_clone_render) {
+            eprintln!("An error occurred in screen rendering thread: {}", e);
+        }
+    });
 
     loop {
         {
             let mut state = client_state.lock().unwrap();
             match state.status {
                 Status::Initializing => {
-                // Not registred yet, do that first.
-                state.title = "Console".to_string();
-                state.display.push("Please enter your handle...".to_string());
-                state.status = Status::Registering;
+                    // Not registred yet, do that first.
+                    state.title = "Registering".to_string();
+                    state.display.push("Please enter your handle...".to_string());
+                    state.status = Status::Registering;
                 },
-                Status::Registering => {
-                    // Waiting on successfull registration  
-                }
+                Status::Exit => break,
                 _ => { }
             }
         }
 
-        let _ = draw_terminal(&mut terminal, &client_state, &input);
-
         if let event::Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Enter =>   {
-                    let _ = process_input(input.clone(), &client_state, &stream);
-                    input.clear();
+                    let _ = process_input(&client_state, &stream);
                 }
-                KeyCode::Char(c) => input.push(c),
-                KeyCode::Backspace => {input.pop();},
+                KeyCode::Char(c) => {
+                    let mut state = client_state.lock().unwrap();
+                    state.input.push(c);
+                }
+                KeyCode::Backspace => {
+                    let mut state = client_state.lock().unwrap();
+                    state.input.pop();
+                },
                 KeyCode::Esc => break,
                 _ => {}
             }
