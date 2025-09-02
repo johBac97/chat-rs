@@ -241,12 +241,20 @@ fn draw_terminal(
         )
     };
 
+    let mut list_state = ListState::default();
+
     terminal.draw(|frame| {
         let area = frame.area();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(90), Constraint::Percentage(10)])
             .split(area);
+
+        if !display.is_empty() {
+            list_state.select(Some(display.len().saturating_sub(1)));
+        } else {
+            list_state.select(None);
+        }
 
         let msg_list = List::new(display.iter().map(|m| {
             let sender = format!("[{}] ", m.sender.to_uppercase());
@@ -257,16 +265,18 @@ fn draw_terminal(
                 DisplayMessageMode::System => sender.red().bold(),
             };
 
-            //Line::from(vec![sender_formatted.into(), m.content.as_str().into()])
             Line::from(vec![sender_formatted, m.content.as_str().into()])
         }))
         .block(Block::default().title(title).borders(Borders::ALL));
-        frame.render_widget(msg_list, chunks[0]);
+        frame.render_stateful_widget(msg_list, chunks[0], &mut list_state);
 
         let input_para = Paragraph::new(input.as_str())
             .block(Block::default().title("Input").borders(Borders::ALL));
         frame.render_widget(input_para, chunks[1]);
-        frame.set_cursor_position(Position::new(chunks[1].x + input.len() as u16 + 1, chunks[1].y + 1));
+        frame.set_cursor_position(Position::new(
+            chunks[1].x + input.len() as u16 + 1,
+            chunks[1].y + 1,
+        ));
     })?;
 
     Ok(())
@@ -362,7 +372,6 @@ fn render(client_state: Arc<Mutex<ClientState>>) -> io::Result<()> {
         draw_terminal(&mut terminal, &client_state)?;
         thread::sleep(Duration::from_millis(32));
     }
-
 }
 
 fn main() -> io::Result<()> {

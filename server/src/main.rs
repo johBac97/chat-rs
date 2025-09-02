@@ -1,10 +1,10 @@
 use protocol::{decode, recv_msg, send_msg, ClientToServer, Message, ServerToClient};
 use std::collections::HashMap;
+use std::env;
 use std::io;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::env;
 
 #[derive(Debug)]
 struct Client {
