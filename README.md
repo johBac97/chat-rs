@@ -35,3 +35,8 @@ Start the client, specifying the server’s address (e.g., `127.0.0.1:8080` for 
 ```bash
 cargo run --bin client -- 127.0.0.1:8080
 ```
+
+### Demo Video
+
+https://github.com/user-attachments/assets/d2b573ff-8b1e-4b12-b47b-a8a798b252de
+
